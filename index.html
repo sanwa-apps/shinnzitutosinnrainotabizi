@@ -1,1 +1,1413 @@
-# shinnzitutosinnrainotabizi
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>真実と信用の旅路</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&display=swap');
+        body { font-family: 'Zen Maru Gothic', sans-serif; background-color: #0f172a; color: #e2e8f0; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .modal-anim { animation: fadeIn 0.3s ease-out forwards; }
+        
+        /* スクロールバー */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1e293b; }
+        ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        
+        .scan-line { 
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0.05) 50%, rgba(255,255,255,0));
+            background-size: 100% 4px;
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 9999;
+        }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root" class="h-screen w-screen overflow-hidden"></div>
+    <div class="scan-line"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- テキストデータ ---
+        const GAME_TEXTS = {
+            TITLE: "真実と信用の旅路",
+            STORY: [
+                "遥か昔、平和だった王国に魔王の影が忍び寄った。",
+                "国王は各地から勇猛な戦士たちを招集し、魔王討伐隊を結成する。",
+                "しかし、その中には魔王に魂を売った「裏切り者」が紛れ込んでいるとのうわさが....",
+                "裏切者を追放し、クエストをクリアしてレベルを上げ魔王を討伐しよう！"
+            ],
+            OVERVIEW: "このゲームでは仲間とクエストをクリアしてレベルを上げ、裏切者に邪魔されることなく魔王を討伐することが目的のゲームです。\n様々なスキルや職業ごとのステータスを活用し、勇者陣営は魔王討伐を目指し魔王陣営は魔王討伐を阻止しましょう。",
+            FLOW: [
+                "1.職業確認: 自分の役職と陣営を密かに確認します。",
+                "2.クエスト: 全員で協力してレベルを上げます。しかし裏切り者は...？",
+                "3.追放会議: 怪しい人物を多数決で追放する会議を行います。",
+                "4.魔王討伐: 鍛えた力で魔王に挑みます。3ターン以内に撃破することができれば討伐成功です。"
+            ],
+            NOTE: "※職業ごとにスキルが存在し、裏切者を発見するスキルや魔王討伐の際に有効なスキルなど様々なものが存在ます。"
+        };
+
+        // --- モンスターデータ ---
+        const MONSTERS = {
+            C: ['スライム', 'ゴブリン', 'コボルト', 'オーク', 'ゴースト', 'ちびドラゴン', 'ウルフ', 'レッドラビット', 'ホーネット', 'スケルトン', 'キラーアント'],
+            B: ['オーガ', 'ワイト', 'リザード', 'ゴブリンソルジャー', 'アンデットホース', 'トロール', 'ゴーレム'],
+            A: ['ワイバーン', 'ゴブリンキング', 'ヴァンパイア', 'ブラックスコーピオン'],
+            S: ['死竜王バルダグ', '不死鳥フェニックス']
+        };
+
+        // --- データ定義 ---
+        const ROLES = {
+            HERO: { 
+                name: '勇者', atk: 3, hp: 4, def: 3, 
+                desc: '攻守ともに穴のないステータスが特徴',
+                skill: { name: '勇者の試練', type: 'QUEST', desc: '【1回限定】クエスト選択時に発動可能。次に選択する任意のクエストを必要人数に関係なく一人でクリアできる。' }
+            },
+            WARRIOR: { 
+                name: '戦士', atk: 4, hp: 3, def: 2, 
+                desc: 'バランスのいいアタッカー',
+                skill: { name: '渾身斬り', type: 'BOSS', desc: '【1回限定】魔王討伐時に発動可能。魔王もしくはプレイヤーに現在のATK×3ダメージを与える攻撃を行う。' }
+            },
+            MAGE: { 
+                name: '魔法使い', atk: 4, hp: 3, def: 1, 
+                desc: '火力が高い魔法アタッカー',
+                skill: { name: '魔法の占い', type: 'QUEST_BEFORE', desc: '【1回限定】クエスト選択時に発動可能。選択したプレイヤーの職業と陣営を盗み見ることができる。' }
+            },
+            CLERIC: { 
+                name: '僧侶', atk: 1, hp: 5, def: 2, 
+                desc: '回復が得意なサポーター',
+                skill: { name: '全体回復魔法', type: 'ANYTIME', desc: '【1回限定】いつでも発動可能。プレイヤー全員のHPを20回復させる。魔王討伐時の使用はそのターン他の行動はできない。' }
+            },
+            KNIGHT: { 
+                name: '騎士', atk: 2, hp: 4, def: 4, 
+                desc: '耐久力が魅力のディフェンダー',
+                skill: { name: '屈強な肉体', type: 'PASSIVE', desc: '【永続効果】クエストに参加時、自身が受けるダメージを1軽減させる。' }
+            },
+            MONK: { 
+                name: '格闘家', atk: 5, hp: 3, def: 0, 
+                desc: '高火力アタッカー。耐久力が課題',
+                skill: { name: '正拳突き', type: 'BOSS', desc: '【1回限定】魔王討伐時に発動可能。1ターンのためが必要だが次のターン魔王もしくはプレイヤーに現在のATK×4ダメージを与える攻撃を行う。' }
+            },
+            THIEF: { 
+                name: '盗賊', atk: 3, hp: 3, def: 2, 
+                desc: 'トリッキーな動きで場を攪乱する',
+                skill: { name: '盗賊の極意', type: 'QUEST_BEFORE', desc: '【1回限定】クエスト選択時に発動可能。指定したプレイヤーと陣営を入れ替えることができる。' }
+            },
+            SPIRIT: {
+                name: '精霊使い', atk: 2, hp: 5, def: 2,
+                desc: '平均的なステータス。スキルで場を制御',
+                skill: { name: '精霊の誓い', type: 'QUEST_BEFORE', desc: '【1回限定】クエスト選択時に発動可能。どの職業が今回のゲームで参加しているか確認することができる(誰がどの職業かは不明)。' }
+            }
+        };
+
+        // --- コンポーネント ---
+
+        const RoleListModal = ({ isOpen, onClose }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-2" onClick={onClose}>
+                    <div className="bg-slate-800 rounded-xl p-4 w-full max-w-5xl max-h-[95vh] overflow-y-auto border border-slate-600 modal-anim flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-2 flex-none">
+                            <h2 className="text-xl font-bold text-yellow-400">職業一覧</h2>
+                            <button onClick={onClose} className="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded text-white font-bold">閉じる</button>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 overflow-y-auto flex-grow">
+                            {Object.values(ROLES).map((role, idx) => (
+                                <div key={idx} className="bg-slate-700 p-3 rounded flex flex-col gap-1 border border-slate-600">
+                                    <div className="flex justify-between font-bold text-white border-b border-slate-500 pb-1">
+                                        <span className="text-lg">{role.name}</span>
+                                        <span className="text-sm text-blue-300 self-end">勇者陣営</span>
+                                    </div>
+                                    <div className="grid grid-cols-3 text-center text-base">
+                                        <div><span className="text-xs text-slate-400 block">ATK</span>Lv×{role.atk}</div>
+                                        <div><span className="text-xs text-slate-400 block">HP</span>Lv×{role.hp}</div>
+                                        <div><span className="text-xs text-slate-400 block">DEF</span>Lv×{role.def}</div>
+                                    </div>
+                                    <div className="text-sm text-slate-300">{role.desc}</div>
+                                    <div className="bg-slate-800 p-2 rounded text-sm mt-1">
+                                        <span className="text-yellow-400 font-bold block mb-1">スキル: {role.skill.name}</span>
+                                        <span className="text-xs">{role.skill.desc}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const Popup = ({ title, message, type = 'info', onClose }) => (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                <div className={`bg-slate-800 border-2 rounded-xl p-6 max-w-md w-full text-center shadow-2xl modal-anim ${
+                    type === 'danger' ? 'border-red-500' : type === 'success' ? 'border-green-500' : 'border-blue-500'
+                }`}>
+                    <h2 className={`text-2xl font-bold mb-4 ${
+                        type === 'danger' ? 'text-red-400' : type === 'success' ? 'text-green-400' : 'text-blue-300'
+                    }`}>{title}</h2>
+                    <p className="text-lg mb-6 whitespace-pre-wrap leading-relaxed">{message}</p>
+                    <button onClick={onClose} className="bg-slate-600 hover:bg-slate-500 text-white px-8 py-3 rounded font-bold text-lg">
+                        確認
+                    </button>
+                </div>
+            </div>
+        );
+
+        const ChoicePopup = ({ title, message, choices, onClose }) => (
+            <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                <div className="bg-slate-800 border-2 border-yellow-500 rounded-xl p-6 max-w-md w-full text-center shadow-2xl modal-anim">
+                    <h2 className="text-2xl font-bold mb-4 text-yellow-400">{title}</h2>
+                    <p className="text-lg mb-6 whitespace-pre-wrap text-slate-200">{message}</p>
+                    <div className="flex flex-col gap-3">
+                        {choices.map((choice, idx) => (
+                            <button 
+                                key={idx} 
+                                onClick={() => onClose(choice.value)}
+                                className={`py-3 rounded-xl font-bold text-lg shadow-lg ${choice.className || 'bg-slate-600 text-white'}`}
+                            >
+                                {choice.label}
+                            </button>
+                        ))}
+                        <button onClick={() => onClose(null)} className="mt-2 text-slate-400 hover:text-white underline text-lg">キャンセル</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const HandoverScreen = ({ nextPlayerName, message = "画面を渡してください", onOpen }) => (
+            <div className="fixed inset-0 bg-slate-950 flex flex-col items-center justify-center z-40 text-center p-8">
+                <div className="text-6xl mb-8 animate-bounce">🛑</div>
+                <h2 className="text-4xl font-bold text-yellow-500 mb-6">{message}</h2>
+                <p className="text-2xl text-slate-300 mb-10">次は <span className="font-bold text-white text-3xl">{nextPlayerName}</span> さんの番です</p>
+                <button onClick={onOpen} className="bg-blue-600 hover:bg-blue-500 text-white px-16 py-6 rounded-full text-2xl font-bold shadow-lg border-2 border-blue-400">
+                    本人が確認したら押す
+                </button>
+            </div>
+        );
+
+        const HPBar = ({ current, max, label = "HP", color = "green" }) => {
+            const percentage = Math.max(0, Math.min(100, (current / max) * 100));
+            const barColor = color === "red" ? "from-red-700 to-red-500" : "from-green-600 to-green-400";
+            return (
+                <div className="w-full">
+                    {label && <div className="text-[10px] text-slate-400 mb-0.5">{label}</div>}
+                    <div className="w-full bg-slate-900/50 rounded-full h-2 md:h-3 overflow-hidden border border-slate-600 relative">
+                        <div 
+                            className={`h-full bg-gradient-to-r ${barColor} transition-all duration-500 ease-out`}
+                            style={{ width: `${percentage}%` }}
+                        ></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const GameStatusHUD = ({ bossHP, bossMaxHP, players, turnOrder, turn, maxTurn, phase, activePlayerName, bossTurnCount, onOpenRoleList, onBackToTitle }) => {
+            // 行動順に並び替え
+            const orderedPlayers = turnOrder.length > 0 ? turnOrder.map(id => players.find(p => p.id === id)).filter(Boolean) : players;
+
+            return (
+                <div className="fixed top-0 left-0 w-full bg-slate-900/95 border-b border-slate-700 z-30 shadow-lg backdrop-blur-sm transition-all pb-1">
+                    <div className="max-w-7xl mx-auto px-2 pt-1">
+                        {/* 上段: 魔王HP & ターン情報 & 手番 (1行にまとめる) */}
+                        <div className="flex justify-between items-center mb-1 gap-2 h-8">
+                            {/* 魔王HP */}
+                            <div className="flex items-center gap-2 flex-grow max-w-md">
+                                <span className="text-red-500 font-black text-xs whitespace-nowrap">魔王</span>
+                                <div className="flex-grow h-3 bg-slate-800 rounded-full overflow-hidden border border-slate-600 relative">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-red-700 to-red-500 transition-all duration-500 ease-out" 
+                                        style={{ width: `${bossMaxHP > 0 ? Math.max(0, Math.min(100, (bossHP / bossMaxHP) * 100)) : 0}%` }}
+                                    ></div>
+                                    {/* 数値表示 */}
+                                    <div className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white drop-shadow leading-none">
+                                        {bossHP}/{bossMaxHP}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* 情報エリア */}
+                            <div className="flex items-center gap-1 text-[10px] text-slate-300">
+                                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-600">
+                                    T {turn}/{maxTurn}
+                                </span>
+                                <span className="bg-slate-800 px-1.5 py-0.5 rounded border border-slate-600 font-bold text-blue-300">
+                                    {phase.includes('BOSS') ? `魔王戦 R${bossTurnCount}` : phase === 'ACTION_SELECT' ? '行動選択' : phase.replace('_', ' ')}
+                                </span>
+                                <span className="font-bold text-white bg-blue-900/80 px-2 py-0.5 rounded border border-blue-500 truncate max-w-[80px] text-center">
+                                    {activePlayerName}
+                                </span>
+                            </div>
+                        </div>
+                        
+                        {/* 下段: プレイヤーリスト(行動順) + ボタン (高さを抑える) */}
+                        <div className="flex items-stretch gap-1 overflow-x-auto pb-1 scrollbar-hide h-12">
+                            {orderedPlayers.map((p) => (
+                                <div key={p.id} className={`flex-none w-20 bg-slate-800 rounded border ${p.isDead ? 'border-red-900 opacity-60' : 'border-slate-600'} p-1 flex flex-col justify-center gap-0.5 relative`}>
+                                    <div className="flex justify-between items-center leading-none px-0.5">
+                                        <span className={`font-bold text-xs truncate ${p.isDead ? 'text-red-500' : 'text-white'}`}>{p.name}</span>
+                                        {p.isDead && <span className="text-[9px] text-red-500 font-black">†</span>}
+                                    </div>
+                                    <HPBar current={p.currentHp} max={p.maxHp} showText={false} label={null} />
+                                </div>
+                            ))}
+                            
+                            {/* ボタン群 (右端) */}
+                            <div className="ml-auto flex gap-1">
+                                <button onClick={onOpenRoleList} className="bg-slate-700 hover:bg-slate-600 text-yellow-400 px-2 py-1 rounded text-[10px] font-bold border border-yellow-600 shadow-md h-full flex flex-col items-center justify-center w-10 leading-tight">
+                                    <span className="text-sm">📖</span>
+                                    <span>職</span>
+                                </button>
+                                <button onClick={onBackToTitle} className="bg-slate-800 hover:bg-red-900 text-slate-400 hover:text-white px-2 py-1 rounded text-[10px] font-bold border border-slate-600 shadow-md h-full flex flex-col items-center justify-center w-10 transition leading-tight">
+                                    <span className="text-sm">🏠</span>
+                                    <span>TOP</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- メインアプリ ---
+        const App = () => {
+            const [phase, setPhase] = useState('INTRO'); 
+            const [turn, setTurn] = useState(1);
+            const [maxTurn, setMaxTurn] = useState(8);
+            const [playerCount, setPlayerCount] = useState(4);
+            const [playerNames, setPlayerNames] = useState([]);
+            const [players, setPlayers] = useState([]);
+            const [turnOrder, setTurnOrder] = useState([]); 
+            
+            const [quests, setQuests] = useState([]);
+            const [questResults, setQuestResults] = useState([]); 
+            const [actionQueue, setActionQueue] = useState([]); 
+            const [activePlayerId, setActivePlayerId] = useState(0);
+            const [isHandover, setIsHandover] = useState(false);
+            
+            const [playerActions, setPlayerActions] = useState({});
+            const [votes, setVotes] = useState({});
+            
+            const [bossBattleActions, setBossBattleActions] = useState({});
+            const [bossBattleLog, setBossBattleLog] = useState([]);
+            const [bossInitialPlayerCount, setBossInitialPlayerCount] = useState(0);
+            const [bossHP, setBossHP] = useState(0);
+            const [bossMaxHP, setBossMaxHP] = useState(0);
+            const [winner, setWinner] = useState(null);
+            const [bossTurnCount, setBossTurnCount] = useState(1);
+            const [bossNextAction, setBossNextAction] = useState(null); 
+            
+            const [battleState, setBattleState] = useState({}); 
+
+            const [popup, setPopup] = useState(null);
+            const [choicePopup, setChoicePopup] = useState(null);
+            const [timeLeft, setTimeLeft] = useState(180); 
+            const [showRoleList, setShowRoleList] = useState(false);
+            
+            useEffect(() => {
+                let timer;
+                if ((phase === 'STRATEGY' || phase === 'VOTE_DISCUSS') && timeLeft > 0) {
+                    timer = setInterval(() => setTimeLeft(t => t - 1), 1000);
+                }
+                return () => clearInterval(timer);
+            }, [phase, timeLeft]);
+
+            const selectPlayerCount = (count) => {
+                setPlayerCount(count);
+                setPlayerNames(prev => {
+                    const newNames = Array(count).fill('');
+                    for (let i = 0; i < count; i++) {
+                        newNames[i] = prev[i] || `Player ${i + 1}`;
+                    }
+                    return newNames;
+                });
+                setPhase('NAME_ENTRY');
+            };
+
+            const handleBackToTitle = () => {
+                setChoicePopup({
+                    title: '確認',
+                    message: 'タイトルに戻りますか？\n現在のゲームデータは失われます。',
+                    choices: [
+                        { label: '戻る', value: 'yes', className: 'bg-red-600 text-white' }
+                    ],
+                    onClose: (val) => {
+                        setChoicePopup(null);
+                        if(val === 'yes') {
+                            setPhase('SETUP');
+                            setTurn(1);
+                            setBossHP(0);
+                            setBossMaxHP(0);
+                            setWinner(null);
+                            setBossBattleLog([]);
+                            setTurnOrder([]);
+                            setPlayers([]);
+                        }
+                    }
+                });
+            };
+            
+            const handleBackToTitleForce = () => {
+                setPhase('SETUP');
+                setTurn(1);
+                setBossHP(0);
+                setBossMaxHP(0);
+                setWinner(null);
+                setBossBattleLog([]);
+                setTurnOrder([]);
+                setPlayers([]);
+            };
+
+            const startGame = () => {
+                let roleKeys = Object.keys(ROLES);
+                while(roleKeys.length < playerCount) roleKeys = roleKeys.concat(Object.keys(ROLES));
+                roleKeys = roleKeys.sort(() => Math.random() - 0.5).slice(0, playerCount);
+
+                let demonCount = 0;
+                if (playerCount === 3) demonCount = Math.random() < 0.5 ? 0 : 1;
+                else if (playerCount === 4) demonCount = Math.random() < 0.2 ? 0 : 1;
+                else if (playerCount === 5) demonCount = Math.random() < 0.7 ? 1 : 2;
+                else if (playerCount === 6) demonCount = 2;
+
+                let teamAssignment = Array(playerCount).fill('HERO');
+                for(let i=0; i<demonCount; i++) teamAssignment[i] = 'DEMON';
+                teamAssignment.sort(() => Math.random() - 0.5);
+
+                const newPlayers = roleKeys.map((roleKey, index) => ({
+                    id: index,
+                    name: playerNames[index] || `Player ${index + 1}`,
+                    roleKey: roleKey,
+                    roleName: ROLES[roleKey].name,
+                    realTeam: teamAssignment[index],
+                    level: 1,
+                    maxHp: ROLES[roleKey].hp, 
+                    currentHp: ROLES[roleKey].hp, 
+                    isDead: false,
+                    skillUsed: false,
+                    trainingBonus: false,
+                    totalDamageDealt: 0
+                }));
+
+                const order = newPlayers.map(p => p.id).sort(() => Math.random() - 0.5);
+                setTurnOrder(order);
+                setPlayers(newPlayers);
+                setMaxTurn(playerCount); 
+                
+                let hp = 350;
+                if (playerCount === 3) hp = 200;
+                else if (playerCount === 5) hp = 500;
+                else if (playerCount === 6) hp = 700;
+
+                setBossMaxHP(hp); 
+                setBossHP(hp);
+                
+                setTurn(1);
+                generateQuests([], 4, newPlayers); 
+                
+                setPhase('ORDER_ANNOUNCE');
+            };
+
+            const startRoleConfirm = () => {
+                const queue = [...turnOrder]; 
+                setActionQueue(queue.slice(1));
+                setActivePlayerId(queue[0]);
+                setPhase('ROLE_CONFIRM');
+                setIsHandover(true);
+            };
+
+            const generateQuests = (existingQuests = [], targetCount = 4, currentPlayers = players) => {
+                const currentCount = existingQuests.length;
+                const needed = targetCount - currentCount;
+                if (needed <= 0) { setQuests(existingQuests); return; }
+
+                const ranks = [
+                    { id: 'S', label: 'S: 女王の依頼', reqDiff: 0, rewardVal: 4, damageVal: 6, color: 'text-red-600', borderColor: 'border-red-600' },
+                    { id: 'A', label: 'A: 王国防衛', reqDiff: -1, rewardVal: 3, damageVal: 4, color: 'text-red-400', borderColor: 'border-red-400' },
+                    { id: 'B', label: 'B: 砦奪還', reqDiff: -2, rewardVal: 2, damageVal: 2, color: 'text-orange-400', borderColor: 'border-orange-400' },
+                    { id: 'C', label: 'C: モンスター討伐', reqDiff: -3, rewardVal: 1, damageVal: 1, color: 'text-yellow-300', borderColor: 'border-yellow-300' }
+                ];
+
+                const newQuests = [...existingQuests];
+                const usedMonsters = new Set(existingQuests.map(q => q.monsterName));
+
+                const aliveCount = currentPlayers.length > 0 ? currentPlayers.filter(p => !p.isDead).length : 4;
+
+                for (let i = 0; i < needed; i++) {
+                    const r = Math.random();
+                    let rank = r > 0.9 ? ranks[0] : r > 0.7 ? ranks[1] : r > 0.4 ? ranks[2] : ranks[3];
+                    
+                    const monsterList = MONSTERS[rank.id];
+                    let monsterName = "";
+                    let attempts = 0;
+                    do {
+                        monsterName = monsterList[Math.floor(Math.random() * monsterList.length)];
+                        attempts++;
+                    } while (usedMonsters.has(monsterName) && attempts < 20);
+                    usedMonsters.add(monsterName);
+                    
+                    let req = Math.max(1, aliveCount + rank.reqDiff); 
+                    
+                    newQuests.push({
+                        id: Date.now() + i + Math.random(), 
+                        title: rank.label,
+                        req: req,
+                        rewardVal: rank.rewardVal,
+                        damageVal: rank.damageVal,
+                        color: rank.color,
+                        borderColor: rank.borderColor,
+                        rank: rank.id,
+                        monsterName: monsterName,
+                    });
+                }
+                setQuests(newQuests);
+            };
+
+            const startNewTurn = (clearedQuestIds = []) => {
+                if (turn >= maxTurn) {
+                    startBossPhase();
+                    return;
+                }
+                const remainingQuests = quests.filter(q => !clearedQuestIds.includes(q.id));
+                generateQuests(remainingQuests, 4);
+                setTurn(t => t + 1);
+                setTimeLeft(180);
+                setPhase('STRATEGY');
+                setPlayerActions({});
+                setVotes({});
+            };
+
+            const nextPlayer = (nextPhaseIfDone) => {
+                if (actionQueue.length === 0) {
+                    setPhase(nextPhaseIfDone);
+                    return;
+                }
+                const nextId = actionQueue[0];
+                setActionQueue(prev => prev.slice(1));
+                setActivePlayerId(nextId);
+                setIsHandover(true);
+            };
+
+            const finishRoleConfirm = () => nextPlayer('STRATEGY');
+            
+            const startActionPhase = () => {
+                const living = turnOrder.filter(id => {
+                    const p = players.find(pl => pl.id === id);
+                    return !p.isDead;
+                });
+                setActionQueue(living.slice(1));
+                setActivePlayerId(living[0]);
+                setPlayerActions({});
+                setPhase('ACTION_SELECT');
+                setIsHandover(true);
+            };
+
+            const handleMageSkill = () => {
+                const targets = players.filter(p => p.id !== activePlayerId);
+                setChoicePopup({
+                    title: '魔法の占い',
+                    message: '誰の正体を占いますか？',
+                    choices: targets.map(p => ({ label: p.name, value: p.id, className: 'bg-purple-600 text-white' })),
+                    onClose: (targetId) => {
+                        setChoicePopup(null);
+                        if (targetId !== null) {
+                            const target = players.find(p => p.id === targetId);
+                            setPlayers(prev => prev.map(p => p.id === activePlayerId ? {...p, skillUsed: true} : p));
+                            setPopup({
+                                title: '占いの結果',
+                                message: `${target.name} は... \n\n【${target.roleName}】\n陣営：${target.realTeam === 'HERO' ? '勇者陣営' : '魔王陣営'}`,
+                                type: 'success',
+                                onClose: () => setPopup(null)
+                            });
+                        }
+                    }
+                });
+            };
+
+            const handleThiefSkill = () => {
+                const targets = players.filter(p => p.id !== activePlayerId);
+                setChoicePopup({
+                    title: '陣営入替',
+                    message: '誰と陣営を入れ替えますか？\n(自分と対象の陣営が交換されます)',
+                    choices: targets.map(p => ({ label: p.name, value: p.id, className: 'bg-slate-600 text-white' })),
+                    onClose: (targetId) => {
+                        setChoicePopup(null);
+                        if (targetId !== null) {
+                            const target = players.find(p => p.id === targetId);
+                            const me = players.find(p => p.id === activePlayerId);
+                            const myTeam = me.realTeam;
+                            const targetTeam = target.realTeam;
+                            setPlayers(prev => prev.map(p => {
+                                if (p.id === activePlayerId) return { ...p, realTeam: targetTeam, skillUsed: true };
+                                if (p.id === targetId) return { ...p, realTeam: myTeam };
+                                return p;
+                            }));
+                            setPopup({
+                                title: '入替完了',
+                                message: `${target.name} と陣営を入れ替えました。\n\nあなたは今【${targetTeam === 'HERO' ? '勇者陣営' : '魔王陣営'}】です。\n(※相手には通知されません)`,
+                                type: 'success',
+                                onClose: () => setPopup(null)
+                            });
+                        }
+                    }
+                });
+            };
+
+            const handleSpiritSkill = () => {
+                const roleNames = players.map(p => p.roleName).sort(() => Math.random() - 0.5);
+                const roleCounts = {};
+                roleNames.forEach(name => roleCounts[name] = (roleCounts[name] || 0) + 1);
+                const displayList = Object.entries(roleCounts).map(([name, count]) => `${name}${count > 1 ? ' x'+count : ''}`).join('\n');
+                setPlayers(prev => prev.map(p => p.id === activePlayerId ? {...p, skillUsed: true} : p));
+                setPopup({
+                    title: '精霊の誓い',
+                    message: `今回のゲームに参加している職業:\n\n${displayList}\n\n(※誰がどの職業かは不明)`,
+                    type: 'info',
+                    onClose: () => setPopup(null)
+                });
+            };
+
+            const handleClericSkillAnytime = () => {
+                setChoicePopup({
+                    title: '全体回復魔法',
+                    message: 'スキルを発動しますか？\n全員のHPを20回復します。\n(行動権は消費しません)',
+                    choices: [{ label: '発動する', value: 'yes', className: 'bg-green-600 text-white' }],
+                    onClose: (val) => {
+                        setChoicePopup(null);
+                        if (val === 'yes') {
+                            setPlayers(prev => prev.map(p => ({ ...p, currentHp: Math.min(p.maxHp, p.currentHp + 20), skillUsed: (p.id === activePlayerId ? true : p.skillUsed) })));
+                            setPopup({ title: 'スキル発動', message: '全員のHPが20回復しました！', type: 'success', onClose: () => setPopup(null) });
+                        }
+                    }
+                });
+            };
+
+            const handleQuestClick = (quest) => {
+                const activePlayer = players.find(p => p.id === activePlayerId);
+                if (activePlayer.roleKey === 'HERO' && !activePlayer.skillUsed) {
+                    setChoicePopup({
+                        title: '行動選択',
+                        message: `「${quest.title}」に対してどう行動しますか？`,
+                        choices: [
+                            { label: '普通に参加する', value: 'join', className: 'bg-blue-600 text-white' },
+                            { label: 'スキル: 勇者の試練 (必勝)', value: 'skill', className: 'bg-yellow-600 text-white font-bold' }
+                        ],
+                        onClose: (val) => {
+                            setChoicePopup(null);
+                            if (val === 'join') handleActionSelect({ type: 'QUEST', targetId: quest.id, sabotage: false });
+                            else if (val === 'skill') {
+                                setPlayers(prev => prev.map(p => p.id === activePlayerId ? {...p, skillUsed: true} : p));
+                                handleActionSelect({ type: 'QUEST', targetId: quest.id, sabotage: false, useSkill: true });
+                            }
+                        }
+                    });
+                    return;
+                }
+                setChoicePopup({
+                    title: 'クエスト参加確認',
+                    message: `「${quest.title}」に参加しますか？\n(必要人数: ${quest.req}人)\n\n※参加すると ${quest.damageVal} ダメージ受けます`,
+                    choices: [{ label: '参加する', value: 'join', className: 'bg-blue-600 text-white' }],
+                    onClose: (value) => {
+                        setChoicePopup(null);
+                        if (value === 'join') handleActionSelect({ type: 'QUEST', targetId: quest.id, sabotage: false });
+                    }
+                });
+            };
+
+            const handleTrainingClick = () => {
+                setChoicePopup({
+                    title: '個人修行の確認',
+                    message: `クエストには参加せず、修行をして\n自分だけレベルアップしますか？`,
+                    choices: [{ label: '修行する (不参加)', value: 'train', className: 'bg-yellow-600 text-white' }],
+                    onClose: (value) => {
+                        setChoicePopup(null);
+                        if (value === 'train') handleActionSelect({ type: 'TRAIN' });
+                    }
+                });
+            };
+
+            const handleRestClick = () => {
+                setChoicePopup({
+                    title: '休息の確認',
+                    message: `クエストには参加せず、休息を取りますか？\nHPが全回復します。`,
+                    choices: [{ label: '休息する (不参加)', value: 'rest', className: 'bg-green-600 text-white' }],
+                    onClose: (value) => {
+                        setChoicePopup(null);
+                        if (value === 'rest') handleActionSelect({ type: 'REST' });
+                    }
+                });
+            };
+
+            const handleActionSelect = (action) => {
+                setPlayerActions(prev => ({ ...prev, [activePlayerId]: action }));
+                if (actionQueue.length === 0) calculateQuestResults({ ...playerActions, [activePlayerId]: action });
+                else nextPlayer('QUEST_RESULT');
+            };
+
+            const calculateQuestResults = (actions) => {
+                const clearedIds = [];
+                const results = quests.map(q => {
+                    const participantsActs = Object.entries(actions).filter(([pid, act]) => act.type === 'QUEST' && act.targetId === q.id);
+                    const participantIds = participantsActs.map(([pid]) => parseInt(pid));
+                    const heroSkillUsed = participantsActs.some(([pid, act]) => act.useSkill);
+                    const effectivePower = participantIds.length; 
+                    const isSuccess = heroSkillUsed || (effectivePower >= q.req);
+                    
+                    setPlayers(prev => prev.map(p => {
+                        if (participantIds.includes(p.id)) {
+                            let dmg = q.damageVal;
+                            if (p.roleKey === 'KNIGHT') dmg = Math.max(0, dmg - 1);
+                            
+                            let newHp = p.currentHp - dmg;
+                            let isDead = p.isDead;
+                            if (newHp <= 0) { newHp = 0; isDead = true; }
+
+                            if (isSuccess) {
+                                let rise = q.rewardVal;
+                                if (p.trainingBonus) rise += 3;
+                                const newLevel = p.level + rise;
+                                const hpGrowth = ROLES[p.roleKey].hp * rise;
+                                return { ...p, level: newLevel, maxHp: p.maxHp + hpGrowth, currentHp: newHp + hpGrowth, trainingBonus: false, isDead };
+                            } else {
+                                return { ...p, currentHp: newHp, isDead };
+                            }
+                        }
+                        return p;
+                    }));
+
+                    if (isSuccess) clearedIds.push(q.id);
+                    return { quest: q, participantsCount: participantIds.length, isSuccess, heroSkill: heroSkillUsed };
+                });
+
+                Object.entries(actions).forEach(([pid, act]) => {
+                    if (act.type === 'TRAIN') {
+                        setPlayers(prev => prev.map(p => {
+                            if (p.id === parseInt(pid)) {
+                                return { ...p, level: p.level + 1, maxHp: p.maxHp + ROLES[p.roleKey].hp, currentHp: p.currentHp + ROLES[p.roleKey].hp };
+                            }
+                            return p;
+                        }));
+                    } else if (act.type === 'REST') {
+                        setPlayers(prev => prev.map(p => {
+                            if (p.id === parseInt(pid)) {
+                                return { ...p, currentHp: p.maxHp };
+                            }
+                            return p;
+                        }));
+                    }
+                });
+                setQuestResults(results);
+                setPhase('QUEST_RESULT');
+                window.tempClearedIds = clearedIds; 
+            };
+
+            const startVoteDiscussion = () => {
+                setTimeLeft(180);
+                setPhase('VOTE_DISCUSS');
+            };
+
+            const startVoteSelect = () => {
+                const living = turnOrder.filter(id => {
+                    const p = players.find(pl => pl.id === id);
+                    return !p.isDead;
+                });
+                setActionQueue(living.slice(1));
+                setActivePlayerId(living[0]);
+                setVotes({});
+                setPhase('VOTE_SELECT');
+                setIsHandover(true);
+            };
+
+            const handleVote = (targetId) => {
+                setVotes(prev => ({ ...prev, [activePlayerId]: targetId }));
+                if (actionQueue.length === 0) calculateExile({ ...votes, [activePlayerId]: targetId });
+                else nextPlayer('EXILE_RESULT');
+            };
+
+            const calculateExile = (allVotes) => {
+                const counts = {};
+                let skipCount = 0;
+                Object.values(allVotes).forEach(tid => {
+                    if (tid === null) skipCount++;
+                    else counts[tid] = (counts[tid] || 0) + 1;
+                });
+                let maxVotes = 0;
+                let banishedId = -1;
+                Object.entries(counts).forEach(([id, c]) => {
+                    if (c > maxVotes) {
+                        maxVotes = c;
+                        banishedId = parseInt(id);
+                    } else if (c === maxVotes) banishedId = -1;
+                });
+                if (skipCount >= maxVotes) banishedId = -1;
+                if (banishedId !== -1) {
+                    setPlayers(prev => prev.map(p => p.id === banishedId ? { ...p, isDead: true } : p));
+                    setPopup({ title: '追放決定', message: `投票の結果、追放者が決定しました。`, type: 'danger', onClose: () => { setPopup(null); startNewTurn(window.tempClearedIds || []); } });
+                } else {
+                    setPopup({ title: '追放なし', message: '票が割れた、またはスキップが多数だったため、誰も追放されませんでした。', type: 'info', onClose: () => { setPopup(null); startNewTurn(window.tempClearedIds || []); } });
+                }
+            };
+
+            // --- 魔王戦 ---
+            
+            const decideBossAction = () => {
+                const r = Math.random() * 100;
+                if (r < 5) return { type: 'ROAR', name: '魔王の咆哮', desc: 'HPが低い者を即死させる' };
+                if (r < 20) return { type: 'HELLFIRE', name: '闇の獄炎', desc: '全員に特大ダメージ' };
+                if (r < 40) return { type: 'MAGIC', name: '魔法攻撃', desc: '防御無視の全体攻撃' };
+                return { type: 'NORMAL', name: '通常攻撃', desc: 'ランダム2名に大ダメージ' };
+            };
+
+            const startBossPhase = () => {
+                const aliveCount = players.filter(p => !p.isDead).length;
+                setBossInitialPlayerCount(aliveCount); 
+                // HP回復削除: setPlayersでHP回復させない
+                setPlayers(prev => prev.map(p => ({ ...p, skillUsed: false, charge: false })));
+
+                setBossTurnCount(1);
+                setBossBattleLog([]);
+                setBattleState({}); 
+                setPhase('BOSS_INTRO');
+            };
+
+            const startBossBattleRound = () => {
+                setBossBattleActions({});
+                setBattleState(prev => ({ ...prev, knightTarget: null, smokeBomb: false })); 
+                
+                const nextAction = decideBossAction();
+                setBossNextAction(nextAction);
+
+                const living = turnOrder.filter(id => {
+                    const p = players.find(pl => pl.id === id);
+                    return !p.isDead;
+                });
+                if (living.length === 0) { setWinner('DEMON'); setPhase('RESULT'); return; }
+                setActionQueue(living.slice(1));
+                setActivePlayerId(living[0]);
+                setPhase('BOSS_SELECT');
+                setIsHandover(true);
+            };
+
+            const handleBossTurnStart = () => {
+                const activePlayer = players.find(p => p.id === activePlayerId);
+                const role = ROLES[activePlayer.roleKey];
+
+                if (activePlayer.charge) {
+                     setChoicePopup({
+                        title: '正拳突き',
+                        message: '力を溜めた一撃を放ちます！',
+                        choices: [{ label: '攻撃対象を選択', value: 'attack', className: 'bg-red-600 text-white font-bold' }],
+                        onClose: (val) => {
+                            setChoicePopup(null);
+                            if (val === 'attack') showAttackTargetSelect();
+                        }
+                    });
+                    return;
+                }
+
+                if (!activePlayer.skillUsed && role.skill.type === 'BOSS') {
+                    setChoicePopup({
+                        title: '行動選択',
+                        message: `行動を選択してください。\nスキル: ${role.skill.name}\n(${role.skill.desc})`,
+                        choices: [
+                            { label: '通常行動 (攻撃)', value: 'attack', className: 'bg-red-600 text-white' },
+                            { label: `スキル発動: ${role.skill.name}`, value: 'skill', className: 'bg-yellow-500 text-white font-bold' }
+                        ],
+                        onClose: (val) => {
+                            setChoicePopup(null);
+                            if (val === 'attack') showAttackTargetSelect();
+                            else if (val === 'skill') {
+                                if (activePlayer.roleKey === 'CLERIC') handleBossAction({ type: 'SKILL' });
+                                else if (activePlayer.roleKey === 'MONK') handleBossAction({ type: 'SKILL' });
+                                else if (activePlayer.roleKey === 'WARRIOR') showAttackTargetSelect(true); 
+                            }
+                        }
+                    });
+                } else if (!activePlayer.skillUsed && role.skill.type === 'ANYTIME' && activePlayer.roleKey === 'CLERIC') {
+                     setChoicePopup({
+                        title: '行動選択',
+                        message: `行動を選択してください。`,
+                        choices: [
+                            { label: '通常行動 (攻撃)', value: 'attack', className: 'bg-red-600 text-white' },
+                            { label: `スキル発動: ${role.skill.name}`, value: 'skill', className: 'bg-green-600 text-white font-bold' }
+                        ],
+                        onClose: (val) => {
+                            setChoicePopup(null);
+                            if (val === 'attack') showAttackTargetSelect();
+                            else if (val === 'skill') handleBossAction({ type: 'SKILL' });
+                        }
+                    });
+                } else {
+                    showAttackTargetSelect();
+                }
+            };
+
+            const showAttackTargetSelect = (isSkill = false) => {
+                setChoicePopup({
+                    title: isSkill ? 'スキル対象選択' : '攻撃対象選択',
+                    message: '誰を攻撃しますか？',
+                    choices: [
+                        { label: '魔王', value: 'BOSS', className: 'bg-purple-600 text-white font-bold text-xl' },
+                        ...players.filter(p => !p.isDead && p.id !== activePlayerId).map(p => ({ label: `${p.name} (裏切り)`, value: p.id, className: 'bg-slate-600 text-white' }))
+                    ],
+                    onClose: (val) => {
+                        setChoicePopup(null);
+                        if (val) handleBossAction({ type: isSkill ? 'SKILL' : 'ATTACK', targetId: val });
+                    }
+                });
+            };
+
+            const handleBossAction = (action) => {
+                setBossBattleActions(prev => ({ ...prev, [activePlayerId]: action }));
+                if (action.type === 'SKILL') setPlayers(prev => prev.map(p => p.id === activePlayerId ? {...p, skillUsed: true} : p));
+                if (actionQueue.length === 0) calculateBossBattleResult({ ...bossBattleActions, [activePlayerId]: action });
+                else nextPlayer('BOSS_RESULT');
+            };
+
+            const calculateBossBattleResult = (actions) => {
+                let newLog = []; 
+                newLog.push({ text: `--- Round ${bossTurnCount} ---`, type: 'info' });
+                let currentBossHP = bossHP;
+                let nextPlayers = [...players];
+                let currentState = { ...battleState };
+
+                // 1. スキル発動処理
+                Object.entries(actions).forEach(([attId, action]) => {
+                    if (action.type !== 'SKILL') return;
+                    const actor = nextPlayers.find(p => p.id === parseInt(attId));
+                    const role = ROLES[actor.roleKey];
+                    newLog.push({ text: `${actor.name} のスキル発動！「${role.skill.name}」`, type: 'info' });
+                    if (actor.roleKey === 'KNIGHT') { currentState.knightTarget = actor.id; newLog.push({ text: `>> 魔王の攻撃を引きつける！`, type: 'info' }); }
+                    else if (actor.roleKey === 'MONK') { 
+                        const pIdx = nextPlayers.findIndex(p => p.id === actor.id);
+                        nextPlayers[pIdx] = { ...nextPlayers[pIdx], charge: true };
+                        newLog.push({ text: `>> 力を溜めている...`, type: 'info' }); 
+                    }
+                    else if (actor.roleKey === 'CLERIC') {
+                        newLog.push({ text: `${actor.name} の全体回復魔法！`, type: 'success' });
+                        nextPlayers = nextPlayers.map(p => {
+                            if(!p.isDead) return { ...p, currentHp: Math.min(p.maxHp, p.currentHp + 20) };
+                            return p;
+                        });
+                    }
+                });
+
+                // 2. プレイヤー攻撃・攻撃スキル
+                Object.entries(actions).forEach(([attId, action]) => {
+                    const actor = nextPlayers.find(p => p.id === parseInt(attId));
+                    if (actor.isDead) return; 
+
+                    let currentDmg = 0;
+
+                    if (actor.charge && action.type === 'ATTACK') {
+                        currentDmg = actor.level * ROLES[actor.roleKey].atk * 4; 
+                        actor.charge = false;
+                        newLog.push({ text: `${actor.name} の正拳突き！`, type: 'info' });
+                         if (action.targetId === 'BOSS') {
+                            currentBossHP -= currentDmg;
+                            newLog.push({ text: `魔王に ${currentDmg} ダメージ！`, type: 'damage' });
+                        } else {
+                            const target = nextPlayers.find(p => p.id === parseInt(action.targetId));
+                            if (target && !target.isDead) {
+                                const realDmg = Math.max(1, currentDmg - (target.level * ROLES[target.roleKey].def));
+                                target.currentHp -= realDmg;
+                                newLog.push({ text: `${target.name} に ${realDmg} ダメージ！`, type: 'damage' });
+                                if (target.currentHp <= 0) { target.isDead = true; newLog.push({ text: `${target.name} は力尽きた...`, type: 'death' }); }
+                            }
+                        }
+                    } else {
+                        // 通常攻撃
+                        currentDmg = actor.level * ROLES[actor.roleKey].atk;
+                        
+                        if (action.type === 'SKILL' && actor.roleKey === 'WARRIOR') {
+                            currentDmg *= 3; 
+                            newLog.push({ text: `${actor.name} の渾身斬り！`, type: 'info' });
+                            if (action.targetId === 'BOSS') {
+                                currentBossHP -= currentDmg;
+                                newLog.push({ text: `魔王に ${currentDmg} ダメージ！`, type: 'damage' });
+                            } else {
+                                const target = nextPlayers.find(p => p.id === parseInt(action.targetId));
+                                if (target && !target.isDead) {
+                                    const realDmg = Math.max(1, currentDmg - (target.level * ROLES[target.roleKey].def));
+                                    target.currentHp -= realDmg;
+                                    newLog.push({ text: `${target.name} に ${realDmg} ダメージ！`, type: 'damage' });
+                                    if (target.currentHp <= 0) { target.isDead = true; newLog.push({ text: `${target.name} は力尽きた...`, type: 'death' }); }
+                                }
+                            }
+                        } else if (action.type === 'ATTACK') {
+                            if (action.targetId === 'BOSS') { 
+                                // 通常攻撃の会心判定 (10%)
+                                const isCrit = Math.random() < 0.1;
+                                let finalDmg = currentDmg;
+                                if (isCrit) finalDmg *= 2;
+                                
+                                currentBossHP -= finalDmg;
+                                if (isCrit) newLog.push({ text: `会心の一撃！ ${actor.name} は魔王に ${finalDmg} ダメージ！`, type: 'crit' }); 
+                                else newLog.push({ text: `${actor.name} は魔王に ${finalDmg} ダメージ！`, type: 'damage' }); 
+                            }
+                            else {
+                                const target = nextPlayers.find(p => p.id === parseInt(action.targetId));
+                                if (target && !target.isDead) {
+                                    const realDmg = Math.max(1, currentDmg - (target.level * ROLES[target.roleKey].def));
+                                    target.currentHp -= realDmg;
+                                    newLog.push({ text: `${actor.name} は ${target.name} に ${realDmg} ダメージ！(裏切り)`, type: 'damage' });
+                                    if (target.currentHp <= 0) { target.isDead = true; newLog.push({ text: `${target.name} は力尽きた...`, type: 'death' }); }
+                                }
+                            }
+                        }
+                    }
+
+                    // 与ダメージ記録(BOSSのみ)
+                    if (action.targetId === 'BOSS' && currentDmg > 0) {
+                         const pIdx = nextPlayers.findIndex(p => p.id === actor.id);
+                         nextPlayers[pIdx] = { ...nextPlayers[pIdx], totalDamageDealt: nextPlayers[pIdx].totalDamageDealt + currentDmg };
+                    }
+                });
+
+                // 3. 魔王の反撃
+                if (currentBossHP > 0) {
+                    const livingHeroes = nextPlayers.filter(p => !p.isDead);
+                    if (livingHeroes.length > 0) {
+                        const baseDmgVal = bossInitialPlayerCount;
+                        const action = bossNextAction;
+
+                        if (action.type === 'ROAR') {
+                            const threshold = baseDmgVal * 4;
+                            newLog.push({ text: `魔王の咆哮！！ (HP ${threshold}以下即死)`, type: 'death' });
+                            livingHeroes.forEach(h => { if (h.currentHp <= threshold) { h.currentHp = 0; h.isDead = true; newLog.push({ text: `${h.name} は即死した！`, type: 'death' }); }});
+                        } else if (action.type === 'HELLFIRE') {
+                            const dmg = baseDmgVal * 3; newLog.push({ text: `闇の獄炎！ 全員に ${dmg} ダメージ！`, type: 'damage' });
+                            livingHeroes.forEach(h => { h.currentHp -= dmg; if (h.currentHp <= 0) { h.isDead = true; newLog.push({ text: `${h.name} は燃え尽きた...`, type: 'death' }); }});
+                        } else if (action.type === 'MAGIC') {
+                            const dmg = baseDmgVal * 2; newLog.push({ text: `魔法攻撃！ 全員に ${dmg} ダメージ！(防御無視)`, type: 'damage' });
+                            livingHeroes.forEach(h => { h.currentHp -= dmg; if (h.currentHp <= 0) { h.isDead = true; newLog.push({ text: `${h.name} は倒れた...`, type: 'death' }); }});
+                        } else {
+                            const dmg = baseDmgVal * 3;
+                            newLog.push({ text: `魔王の通常攻撃！ ランダム2名に ${dmg} ダメージ！`, type: 'damage' });
+                            
+                            let targets = [];
+                            const candidates = [...livingHeroes];
+                            for(let i=0; i<2; i++) {
+                                if(candidates.length === 0) break;
+                                const idx = Math.floor(Math.random() * candidates.length);
+                                targets.push(candidates[idx]);
+                            }
+
+                            targets.forEach(t => {
+                                t.currentHp -= dmg;
+                                if (t.currentHp <= 0) {
+                                    t.isDead = true;
+                                    newLog.push({ text: `${t.name} は倒れた...`, type: 'death' });
+                                } else {
+                                    newLog.push({ text: `${t.name} に ${dmg} ダメージ！`, type: 'damage' });
+                                }
+                            });
+                        }
+                    }
+                }
+                setBossHP(Math.max(0, currentBossHP)); setPlayers(nextPlayers);
+                setBossBattleLog(prev => [...newLog, ...prev]); setBattleState(currentState); setPhase('BOSS_RESULT');
+            };
+
+            const nextBossRound = () => {
+                if (bossHP <= 0) { setWinner('HERO'); setPhase('RESULT'); }
+                else if (!players.some(p => !p.isDead)) { setWinner('DEMON'); setPhase('RESULT'); }
+                else if (bossTurnCount >= 3) { setWinner('DEMON'); setPhase('RESULT'); }
+                else { setBossTurnCount(c => c + 1); startBossBattleRound(); }
+            };
+
+            const activePlayer = players.find(p => p.id === activePlayerId) || players[0];
+            const activePlayerName = activePlayer 
+                ? (['STRATEGY','QUEST_RESULT','VOTE_DISCUSS','BOSS_INTRO','BOSS_RESULT'].includes(phase) ? '全員' : activePlayer.name)
+                : '';
+
+            if (phase === 'INTRO') return (
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-8 bg-slate-950 text-white text-center overflow-hidden">
+                    <h1 className="text-4xl md:text-6xl font-black mb-6 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-red-500 drop-shadow-lg animate-pulse">
+                        {GAME_TEXTS.TITLE}
+                    </h1>
+                    <div className="max-w-3xl bg-slate-900/90 p-6 rounded-xl border border-slate-700 shadow-2xl mb-8 text-left space-y-6 overflow-y-auto flex-grow max-h-[70vh]">
+                        <div className="space-y-2 text-slate-300 leading-relaxed">
+                            {GAME_TEXTS.STORY.map((line, i) => <p key={i}>{line}</p>)}
+                        </div>
+
+                        <div className="border-t border-slate-700 pt-4">
+                            <h3 className="text-xl font-bold text-yellow-400 mb-2">ゲーム概要</h3>
+                            <p className="text-sm md:text-base text-slate-300 whitespace-pre-wrap">{GAME_TEXTS.OVERVIEW}</p>
+                        </div>
+
+                        <div className="border-t border-slate-700 pt-4">
+                            <h3 className="text-xl font-bold text-yellow-400 mb-2">ゲームの流れ</h3>
+                            <ul className="list-none space-y-3 text-sm md:text-base text-slate-300">
+                                {GAME_TEXTS.FLOW.map((line, i) => (
+                                    <li key={i}><span className="font-bold text-white bg-slate-700 px-2 py-1 rounded mr-2">{line.split(':')[0]}</span>{line.split(':')[1]}</li>
+                                ))}
+                            </ul>
+                            <p className="text-xs text-slate-400 mt-2">{GAME_TEXTS.NOTE}</p>
+                        </div>
+                    </div>
+                    <button onClick={() => setPhase('SETUP')} className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white px-12 py-4 rounded-full text-2xl font-bold shadow-lg transform transition hover:scale-105 flex-none">
+                        冒険を始める
+                    </button>
+                </div>
+            );
+
+            if (phase === 'SETUP') return (
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-4 bg-slate-900 text-white overflow-hidden">
+                    <h2 className="text-3xl font-bold mb-8">プレイ人数を選択</h2>
+                    <div className="grid grid-cols-3 gap-6 w-full max-w-md">
+                        {[3,4,5,6].map(n => (
+                            <button key={n} onClick={()=>selectPlayerCount(n)} className="aspect-square bg-slate-800 hover:bg-blue-900 border-2 border-slate-600 hover:border-blue-400 rounded-2xl font-bold text-4xl shadow-lg transition">
+                                {n}<span className="text-base block mt-1 text-slate-400">人</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            if (phase === 'NAME_ENTRY') return (
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-4 bg-slate-900 text-white overflow-hidden">
+                    <div className="bg-slate-800 p-6 rounded-2xl shadow-2xl border border-slate-700 w-full max-w-lg flex flex-col max-h-[90vh]">
+                        <h2 className="text-2xl font-bold mb-4 text-center text-yellow-400 flex-none">プレイヤー名入力</h2>
+                        <div className="space-y-3 overflow-y-auto flex-grow pr-2 mb-4">
+                            {playerNames.map((name, i) => (
+                                <div key={i} className="flex flex-col">
+                                    <label className="text-sm text-slate-400 mb-1">Player {i+1}</label>
+                                    <input type="text" value={name} onChange={(e) => { const newNames = [...playerNames]; newNames[i] = e.target.value; setPlayerNames(newNames); }}
+                                        className="bg-slate-700 text-white p-3 rounded border border-slate-600 focus:border-blue-500 outline-none text-lg" />
+                                </div>
+                            ))}
+                        </div>
+                        <button onClick={startGame} className="w-full bg-green-600 hover:bg-green-500 py-4 rounded-xl font-bold text-xl shadow-lg flex-none">ゲーム開始</button>
+                    </div>
+                </div>
+            );
+
+            if (phase === 'ORDER_ANNOUNCE') return (
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-4 bg-slate-950 text-white overflow-hidden">
+                    <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-slate-700 w-full max-w-xl">
+                        <h2 className="text-3xl font-bold mb-8 text-center text-yellow-400">行動順序決定</h2>
+                        <div className="space-y-4">
+                            {turnOrder.map((pid, idx) => {
+                                const p = players.find(pl => pl.id === pid);
+                                return (
+                                    <div key={pid} className="flex items-center bg-slate-700 p-4 rounded-lg border border-slate-600">
+                                        <span className="text-2xl font-black text-blue-400 w-12 text-center mr-4">{idx + 1}</span>
+                                        <span className="text-xl font-bold">{p.name}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <button onClick={startRoleConfirm} className="w-full mt-8 bg-blue-600 hover:bg-blue-500 py-4 rounded-xl font-bold text-xl shadow-lg">
+                            次へ
+                        </button>
+                    </div>
+                </div>
+            );
+
+            if (phase === 'RESULT') return (
+                <div className="h-screen w-screen flex flex-col items-center justify-center p-4 bg-slate-950 text-white overflow-hidden">
+                    <h1 className={`text-5xl font-black mb-6 ${winner === 'HERO' ? 'text-yellow-400' : 'text-purple-500'}`}>
+                        {winner === 'HERO' ? '勇者勝利！' : '魔王勝利...'}
+                    </h1>
+                    <div className="bg-slate-800 p-6 rounded-xl max-w-xl w-full shadow-2xl border border-slate-700 flex flex-col max-h-[70vh]">
+                        <h2 className="text-xl mb-4 border-b border-slate-600 pb-2 flex-none">最終結果</h2>
+                        <div className="overflow-y-auto flex-grow pr-2">
+                            {players.map(p => (
+                                <div key={p.id} className="flex justify-between items-center bg-slate-700/50 p-3 rounded mb-2">
+                                    <div>
+                                        <span className="font-bold mr-2 text-lg">{p.name}</span>
+                                        <span className="text-base text-slate-300">({p.roleName} Lv.{p.level})</span>
+                                        {p.isDead && <span className="text-red-500 font-bold ml-2 text-sm">DEATH</span>}
+                                    </div>
+                                    <div className="text-right">
+                                        <span className={`font-bold text-lg block ${p.realTeam==='HERO'?'text-blue-400':'text-red-500'}`}>{p.realTeam==='HERO'?'勇者':'魔王'}</span>
+                                        <span className="text-xs text-yellow-200 block">与ダメ: {p.totalDamageDealt}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <button onClick={handleBackToTitleForce} className="mt-8 w-full max-w-md bg-green-600 py-4 rounded-xl font-bold text-xl shadow-lg">タイトルへ戻る</button>
+                </div>
+            );
+
+            if (isHandover && activePlayer) return <HandoverScreen nextPlayerName={activePlayer.name} onOpen={() => setIsHandover(false)} />;
+
+            return (
+                <div className="h-screen w-screen bg-slate-900 text-slate-200 flex flex-col overflow-hidden">
+                    <GameStatusHUD bossHP={bossHP} bossMaxHP={bossMaxHP} players={players} turnOrder={turnOrder} turn={turn} maxTurn={maxTurn} phase={phase} activePlayerName={activePlayerName} onOpenRoleList={()=>setShowRoleList(true)} bossTurnCount={bossTurnCount} onBackToTitle={handleBackToTitle} />
+                    {popup && <Popup {...popup} />}
+                    {choicePopup && <ChoicePopup {...choicePopup} />}
+                    <RoleListModal isOpen={showRoleList} onClose={()=>setShowRoleList(false)} />
+
+                    <main className="flex-grow overflow-y-auto p-2 flex flex-col pt-24 md:pt-28">
+                        {/* ステータス・陣営・スキル常時表示 (個別行動時のみ) */}
+                        {['ROLE_CONFIRM', 'ACTION_SELECT', 'VOTE_SELECT', 'BOSS_SELECT'].includes(phase) && activePlayer && (
+                            <section className="flex-none bg-gradient-to-br from-slate-800 to-slate-900 p-3 rounded-xl border border-slate-700 shadow-xl mb-4 relative">
+                                <div className="absolute top-0 right-0 bg-yellow-600 text-xs px-3 py-1 rounded-bl text-white font-bold">STATUS</div>
+                                
+                                {phase === 'ROLE_CONFIRM' ? (
+                                    <div className={`mb-4 p-4 rounded-xl text-center font-black text-4xl border-4 shadow-xl ${activePlayer.realTeam === 'HERO' ? 'bg-blue-900/90 border-blue-400 text-blue-200' : 'bg-red-900/90 border-red-500 text-red-200'}`}>
+                                        {activePlayer.realTeam === 'HERO' ? '勇者陣営' : '魔王陣営'}
+                                    </div>
+                                ) : (
+                                    // 通常時はコンパクトに (修正: 陣営を左側に移動)
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <h2 className="text-2xl font-black text-yellow-500">{activePlayer.roleName}</h2>
+                                        <span className="text-sm font-bold text-white bg-slate-700 px-2 rounded">Lv.{activePlayer.level}</span>
+                                        <div className={`px-2 py-0.5 rounded text-xs font-bold border ${activePlayer.realTeam === 'HERO' ? 'bg-blue-900/50 border-blue-500 text-blue-300' : 'bg-red-900/50 border-red-500 text-red-400'}`}>
+                                            {activePlayer.realTeam === 'HERO' ? '勇者陣営' : '魔王陣営'}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {phase === 'ROLE_CONFIRM' && (
+                                    <>
+                                        <div className="text-center mb-3">
+                                            <h2 className="text-3xl font-black text-yellow-500">{activePlayer.roleName}</h2>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-3 text-center text-white mb-3">
+                                            <div className="bg-slate-800 p-2 rounded border border-slate-600">
+                                                <span className="text-xs text-slate-400 block">ATK(攻撃)</span>
+                                                <span className="text-xl font-bold">{activePlayer.level * ROLES[activePlayer.roleKey].atk}</span>
+                                            </div>
+                                            <div className="bg-slate-800 p-2 rounded border border-slate-600">
+                                                <span className="text-xs text-slate-400 block">HP(体力)</span>
+                                                <span className="text-xl font-bold">{activePlayer.maxHp}</span>
+                                            </div>
+                                            <div className="bg-slate-800 p-2 rounded border border-slate-600">
+                                                <span className="text-xs text-slate-400 block">DEF(防御)</span>
+                                                <span className="text-xl font-bold">{activePlayer.level * ROLES[activePlayer.roleKey].def}</span>
+                                            </div>
+                                        </div>
+                                        <p className="text-sm text-slate-300 mb-3 italic text-center">{ROLES[activePlayer.roleKey].desc}</p>
+                                    </>
+                                )}
+                                
+                                {phase !== 'ROLE_CONFIRM' && (
+                                    <div className="flex gap-3 text-xs text-slate-300 mb-1">
+                                        <span>ATK: <b className="text-white">{activePlayer.level * ROLES[activePlayer.roleKey].atk}</b></span>
+                                        <span>DEF: <b className="text-white">{activePlayer.level * ROLES[activePlayer.roleKey].def}</b></span>
+                                    </div>
+                                )}
+
+                                {/* 修正: HP数値をバーの上に追加 */}
+                                <div className="flex justify-between items-end mb-1">
+                                    <span className="text-[10px] text-slate-400">HP</span>
+                                    <span className="text-sm font-bold text-white">{activePlayer.currentHp} / {activePlayer.maxHp}</span>
+                                </div>
+                                <div className="mb-2">
+                                    <HPBar current={activePlayer.currentHp} max={activePlayer.maxHp} showText={false} label={null} />
+                                </div>
+
+                                <div className={`p-2 rounded border border-slate-600 ${activePlayer.skillUsed ? 'bg-slate-800/50 opacity-60' : 'bg-slate-800'}`}>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <span className="font-bold text-yellow-400 text-sm">スキル: {ROLES[activePlayer.roleKey].skill.name}</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${activePlayer.skillUsed ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'}`}>
+                                            {activePlayer.skillUsed ? '使用済' : '未使用'}
+                                        </span>
+                                    </div>
+                                    {/* 初期確認画面では大きく表示 */}
+                                    <p className={`${phase === 'ROLE_CONFIRM' ? 'text-base' : 'text-xs'} text-slate-300 truncate`}>{ROLES[activePlayer.roleKey].skill.desc}</p>
+                                </div>
+
+                                {phase === 'ACTION_SELECT' && !activePlayer.skillUsed && (
+                                    <>
+                                    {ROLES[activePlayer.roleKey].skill.type === 'QUEST_BEFORE' && (
+                                        <button onClick={activePlayer.roleKey === 'MAGE' ? handleMageSkill : activePlayer.roleKey === 'THIEF' ? handleThiefSkill : activePlayer.roleKey === 'SPIRIT' ? handleSpiritSkill : activePlayer.roleKey === 'MONK' ? handleMonkSkill : undefined} 
+                                            className="mt-2 w-full bg-purple-600 text-white py-2 rounded font-bold text-base shadow animate-pulse hover:scale-105 transition">
+                                            スキル発動
+                                        </button>
+                                    )}
+                                    {ROLES[activePlayer.roleKey].skill.type === 'ANYTIME' && (
+                                         <button onClick={handleClericSkillAnytime} className="mt-2 w-full bg-green-600 text-white py-2 rounded font-bold text-base shadow animate-pulse hover:scale-105 transition">
+                                            スキル発動 (全体回復)
+                                        </button>
+                                    )}
+                                    </>
+                                )}
+                            </section>
+                        )}
+
+                        {/* フェーズ別コンテンツ */}
+                        <div className="flex-grow flex flex-col justify-center overflow-hidden">
+                            {phase === 'ROLE_CONFIRM' && (
+                                <div className="text-center">
+                                    <p className="mb-6 text-slate-300 text-xl font-bold">あなたの役割を確認しましたか？<br/>画面を渡す準備ができたら押してください。</p>
+                                    <button onClick={finishRoleConfirm} className="w-full bg-slate-700 hover:bg-slate-600 text-white py-5 rounded-2xl font-bold shadow-lg text-2xl transition transform hover:scale-105">確認完了</button>
+                                </div>
+                            )}
+
+                            {phase === 'STRATEGY' && (
+                                <div className="text-center h-full flex flex-col">
+                                    <div className="text-6xl font-mono font-bold text-yellow-500 mb-2 flex-none">
+                                        {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                                    </div>
+                                    <p className="mb-4 text-lg text-slate-400 flex-none">作戦会議中...</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4 text-left overflow-y-auto flex-grow content-start">
+                                        {quests.map(q => (
+                                            <div key={q.id} className={`bg-slate-800 p-4 rounded-xl border-2 ${q.borderColor} relative shadow-md`}>
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <div className={`font-black text-xl ${q.color}`}>{q.title} <span className="text-base text-slate-400">({q.rank})</span></div>
+                                                    <div className="bg-slate-900/80 px-4 py-2 rounded border border-slate-600 text-center min-w-[60px]">
+                                                        <span className="text-xs text-slate-400 block">必要</span>
+                                                        <span className="text-2xl font-black text-white">{q.req}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center justify-between">
+                                                    <div className="text-base text-white font-bold">報酬: Lv +{q.rewardVal}</div>
+                                                    <div className="text-sm font-bold text-yellow-200 bg-slate-700/50 px-2 py-1 rounded">討伐: {q.monsterName}</div>
+                                                </div>
+                                                <div className="text-sm text-red-300 bg-red-900/20 p-1.5 rounded mt-2 font-bold inline-block">
+                                                    ⚠️ 疲労ダメージ: -{q.damageVal} HP
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={() => { setTimeLeft(0); startActionPhase(); }} className="bg-green-600 text-white w-full py-4 rounded-xl font-bold shadow flex-none text-xl hover:bg-green-500 transition">会議終了</button>
+                                </div>
+                            )}
+
+                            {phase === 'ACTION_SELECT' && (
+                                <div className="flex-grow flex flex-col h-full overflow-hidden">
+                                    <h3 className="text-center mb-3 text-lg text-slate-400 flex-none font-bold">行動を選択</h3>
+                                    <div className="flex-grow overflow-y-auto pr-1 pb-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {quests.map(q => (
+                                                <div key={q.id} onClick={() => handleQuestClick(q)} className={`bg-slate-800 p-4 rounded-xl border-2 ${q.borderColor} active:bg-slate-700 cursor-pointer relative shadow-md hover:scale-[1.01] transition overflow-hidden`}>
+                                                    {/* 修正: 必要人数を右上に配置、小さく */}
+                                                    <div className="absolute top-0 right-0 bg-slate-900/90 px-3 py-1 rounded-bl-xl border-b border-l border-slate-600 z-10">
+                                                        <span className="text-[10px] text-slate-400 mr-1">必要</span>
+                                                        <span className="text-xl font-black text-white">{q.req}</span>
+                                                        <span className="text-sm text-slate-400 ml-0.5">人</span>
+                                                    </div>
+
+                                                    <div className="mt-2">
+                                                        <div className={`font-black text-xl ${q.color} mb-1`}>{q.title}</div>
+                                                        <div className="text-base text-yellow-400 font-bold">報酬 Lv+{q.rewardVal} <span className="text-slate-400 text-sm ml-2">({q.monsterName})</span></div>
+                                                        <div className="text-sm text-red-400 font-bold mt-1 bg-red-900/30 px-2 py-0.5 rounded inline-block">dmg -{q.damageVal}</div>
+                                                    </div>
+                                                    <div className="absolute bottom-3 right-3 text-sm text-blue-400 font-bold bg-slate-900 px-3 py-1 rounded border border-blue-900">タップで参加</div>
+                                                </div>
+                                            ))}
+                                            
+                                            <div onClick={() => handleTrainingClick()} className="bg-slate-800 p-5 rounded-xl border-2 border-yellow-500/50 active:bg-yellow-900/20 cursor-pointer flex flex-col justify-center items-center text-center hover:bg-slate-750 transition">
+                                                <span className="text-4xl mb-2">🧘</span>
+                                                <div className="font-bold text-yellow-300 text-xl">個人修行 (不参加)</div>
+                                                <div className="text-sm text-slate-400">Lv+1 / HP変動なし</div>
+                                            </div>
+                                            <div onClick={() => handleRestClick()} className="bg-slate-800 p-5 rounded-xl border-2 border-green-500/50 active:bg-green-900/20 cursor-pointer flex flex-col justify-center items-center text-center hover:bg-slate-750 transition">
+                                                <span className="text-4xl mb-2">🍵</span>
+                                                <div className="font-bold text-green-300 text-xl">休息 (不参加)</div>
+                                                <div className="text-sm text-slate-400">Lv変動なし / HP全回復</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {phase === 'QUEST_RESULT' && (
+                                <div className="text-center h-full flex flex-col">
+                                    <h3 className="text-3xl font-bold text-white mb-6 flex-none">クエスト結果</h3>
+                                    <div className="space-y-3 mb-4 overflow-y-auto flex-grow">
+                                        {questResults.map((res, idx) => (
+                                            <div key={idx} className={`p-4 rounded-xl border-l-8 text-left bg-slate-800 shadow-md ${res.isSuccess?'border-green-500':'border-red-500'}`}>
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <span className={`font-black text-xl ${res.quest.color}`}>{res.quest.title}</span>
+                                                    <span className={`px-4 py-1 rounded text-base font-black ${res.isSuccess?'bg-green-900 text-green-300':'bg-red-900 text-red-300'}`}>{res.isSuccess?'成功':'失敗'}</span>
+                                                </div>
+                                                <div className="text-lg text-slate-300">
+                                                    参加人数: <span className="font-bold text-white text-2xl">{res.participantsCount}</span> / {res.quest.req}
+                                                    {res.heroSkill && <span className="text-yellow-400 ml-3 text-base font-bold">★勇者スキル発動</span>}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button onClick={startVoteDiscussion} className="bg-blue-600 w-full py-5 rounded-xl font-bold shadow flex-none text-2xl hover:bg-blue-500 transition">追放会議へ</button>
+                                </div>
+                            )}
+
+                            {phase === 'VOTE_DISCUSS' && (
+                                <div className="text-center h-full flex flex-col justify-center">
+                                    <div className="text-7xl font-mono font-bold text-red-500 mb-8">{Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}</div>
+                                    <p className="mb-10 text-2xl font-bold">追放会議中...</p>
+                                    <button onClick={() => { setTimeLeft(0); startVoteSelect(); }} className="bg-red-600 w-full py-6 rounded-2xl font-bold shadow-lg text-3xl hover:bg-red-500 transition">投票へ</button>
+                                </div>
+                            )}
+
+                            {phase === 'VOTE_SELECT' && (
+                                <div className="flex-grow flex flex-col h-full">
+                                    <h3 className="text-center text-red-400 mb-6 font-bold text-2xl flex-none">追放するプレイヤーを選択</h3>
+                                    <div className="grid grid-cols-2 gap-4 overflow-y-auto flex-grow mb-4 pr-1">
+                                        {players.filter(p => !p.isDead && p.id !== activePlayerId).map(p => (
+                                            <button key={p.id} onClick={()=>handleVote(p.id)} className="bg-slate-800 border-4 border-slate-600 active:bg-red-900/50 p-4 rounded-2xl font-bold text-2xl h-36 flex items-center justify-center shadow-lg hover:border-red-500 transition">
+                                                {p.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <button onClick={()=>handleVote(null)} className="w-full bg-slate-700 py-5 rounded-xl font-bold text-slate-300 flex-none text-xl hover:bg-slate-600 transition">スキップ</button>
+                                </div>
+                            )}
+
+                            {phase === 'BOSS_INTRO' && (
+                                <div className="text-center py-10">
+                                    <h2 className="text-6xl font-black text-purple-500 mb-10 animate-bounce">魔王戦 開始</h2>
+                                    <p className="mb-10 text-xl text-slate-300 font-bold">3ラウンド耐えろ。<br/>裏切り者は味方を攻撃可能。</p>
+                                    <button onClick={startBossBattleRound} className="bg-purple-600 text-white px-16 py-6 rounded-full text-3xl font-bold shadow-lg hover:bg-purple-500 transition transform hover:scale-105">戦闘開始！</button>
+                                </div>
+                            )}
+
+                            {phase === 'BOSS_SELECT' && (
+                                <div className="h-full flex flex-col justify-center items-center relative">
+                                    <div className="w-full bg-slate-800/90 border-2 border-red-600 p-6 rounded-xl mb-10 text-center animate-pulse shadow-red-900/50 shadow-lg">
+                                        <div className="text-base text-red-400 font-bold mb-2">魔王の気配を察知！</div>
+                                        <div className="text-3xl font-black text-white">{bossNextAction?.name}</div>
+                                        <div className="text-lg text-slate-300 mt-2">{bossNextAction?.desc}</div>
+                                    </div>
+
+                                    <h3 className="text-3xl font-bold text-center text-red-500 mb-12">行動を選択してください</h3>
+                                    <button onClick={handleBossTurnStart} className="bg-blue-600 text-white w-full py-8 rounded-3xl font-bold text-4xl shadow-xl animate-pulse hover:bg-blue-500 transition">
+                                        行動を選択する
+                                    </button>
+                                </div>
+                            )}
+
+                            {phase === 'BOSS_RESULT' && (
+                                <div className="h-full flex flex-col bg-slate-800 rounded-xl border border-slate-600 overflow-hidden shadow-2xl">
+                                    <h3 className="text-2xl font-bold text-center py-4 border-b border-slate-600 bg-slate-800 flex-none">ラウンド結果</h3>
+                                    <div className="flex-grow overflow-y-auto p-6 text-lg space-y-3 bg-slate-900/50">
+                                        {bossBattleLog.map((log, i) => (
+                                            <div key={i} className={`border-b border-slate-700/30 pb-2 ${log.type === 'info' ? 'text-blue-300 font-bold mt-4 pt-2 border-t border-slate-600 text-xl' : log.type === 'success' ? 'text-green-400 font-bold' : ''}`}>
+                                                {log.type === 'damage' ? (
+                                                    <span>{log.text.split(/(\d+)/).map((part, idx) => /\d+/.test(part) ? <span key={idx} className="text-orange-400 font-black text-2xl">{part}</span> : part)}</span>
+                                                ) : log.type === 'death' ? (
+                                                    <span className="text-red-500 font-black text-xl">{log.text}</span>
+                                                ) : (
+                                                    <span>{log.text}</span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="p-6 border-t border-slate-600 bg-slate-800 flex-none">
+                                        <button onClick={nextBossRound} className="w-full bg-blue-600 text-white py-5 rounded-xl font-bold shadow-lg text-2xl hover:bg-blue-500 transition">
+                                            次のラウンドへ
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
